@@ -18,8 +18,8 @@ WORKDIR /frontend
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy custom nginx config and static files
-COPY --from=0  conf/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=0   build /usr/share/nginx/html
+COPY --from=builder  conf/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder   build /usr/share/nginx/html
 
 EXPOSE 3301
 

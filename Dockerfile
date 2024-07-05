@@ -2,7 +2,6 @@ FROM us.gcr.io/aftership-admin/jenkins/nodejs-base:nodejs-18.12.1 as builder
 
 RUN  apt-get -y install make
 COPY . .
-
 RUN make build-frontend-static
 
 
@@ -18,8 +17,8 @@ WORKDIR /frontend
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy custom nginx config and static files
-COPY --from=builder  conf/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder   build /usr/share/nginx/html
+COPY --from=builder  /frontend/conf/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder   /frontend/build /usr/share/nginx/html
 
 EXPOSE 3301
 

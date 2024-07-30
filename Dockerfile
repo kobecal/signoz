@@ -6,16 +6,17 @@ WORKDIR /deploy/signoz
 COPY go.mod go.sum ./
 RUN  go mod download
 COPY . .
-RUN make build-query-service-static-amd64
+RUN  make QUERY_SERVICE_DIRECTORY='ee/query-service'  build-query-service-static-amd64
 
 USER root
 WORKDIR /root
 # copy the query-service binary
-RUN cp   /deploy/signoz/pkg/query-service/bin/query-service-linux-amd64 /root/query-service
+RUN cp   /deploy/signoz/ee/query-service/bin/query-service-linux-amd64 /root/query-service
 # copy prometheus YAML config
 RUN mkdir /root/config/
 RUN cp   /deploy/signoz/pkg/query-service/config/prometheus.yml   /root/config/prometheus.yml
 RUN cp -r  /deploy/signoz/pkg/query-service/templates   /root/templates
+
 
 
 

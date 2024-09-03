@@ -19,7 +19,15 @@ rule_files:
 
 # A scrape configuration containing exactly one endpoint to scrape:
 # Here it's Prometheus itself.
-scrape_configs: []
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "signoz_metrics"
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+
+    static_configs:
+      - targets: ["0.0.0.0:10000"]
 
 remote_read:
   - url: tcp://localhost:9000/signoz_metrics

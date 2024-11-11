@@ -3,7 +3,8 @@
 import './SideNav.styles.scss';
 
 import { Color } from '@signozhq/design-tokens';
-import { Button, Tooltip } from 'antd';
+import { Button } from 'antd';
+import logEvent from 'api/common/logEvent';
 import cx from 'classnames';
 import { FeatureKeys } from 'constants/features';
 import ROUTES from 'constants/routes';
@@ -15,9 +16,6 @@ import history from 'lib/history';
 import {
 	AlertTriangle,
 	CheckSquare,
-	ChevronLeftCircle,
-	ChevronRightCircle,
-	PanelRight,
 	RocketIcon,
 	UserCircle,
 } from 'lucide-react';
@@ -54,13 +52,9 @@ interface UserManagementMenuItems {
 function SideNav({
 	licenseData,
 	isFetching,
-	onCollapse,
-	collapsed,
 }: {
 	licenseData: any;
 	isFetching: boolean;
-	onCollapse: () => void;
-	collapsed: boolean;
 }): JSX.Element {
 	const [menuItems, setMenuItems] = useState(defaultMenuItems);
 
@@ -179,6 +173,11 @@ function SideNav({
 	};
 
 	const onClickShortcuts = (e: MouseEvent): void => {
+		// eslint-disable-next-line sonarjs/no-duplicate-string
+		logEvent('Sidebar: Menu clicked', {
+			menuRoute: '/shortcuts',
+			menuLabel: 'Keyboard Shortcuts',
+		});
 		if (isCtrlMetaKey(e)) {
 			openInNewTab('/shortcuts');
 		} else {
@@ -187,6 +186,10 @@ function SideNav({
 	};
 
 	const onClickGetStarted = (event: MouseEvent): void => {
+		logEvent('Sidebar: Menu clicked', {
+			menuRoute: '/get-started',
+			menuLabel: 'Get Started',
+		});
 		if (isCtrlMetaKey(event)) {
 			openInNewTab('/get-started');
 		} else {
@@ -313,11 +316,13 @@ function SideNav({
 		} else if (item) {
 			onClickHandler(item?.key as string, event);
 		}
+		logEvent('Sidebar: Menu clicked', {
+			menuRoute: item?.key,
+			menuLabel: item?.label,
+		});
 	};
 
 	useEffect(() => {
-		registerShortcut(GlobalShortcuts.SidebarCollapse, onCollapse);
-
 		registerShortcut(GlobalShortcuts.NavigateToServices, () =>
 			onClickHandler(ROUTES.APPLICATION, null),
 		);
@@ -333,6 +338,10 @@ function SideNav({
 			onClickHandler(ROUTES.ALL_DASHBOARD, null),
 		);
 
+		registerShortcut(GlobalShortcuts.NavigateToMessagingQueues, () =>
+			onClickHandler(ROUTES.MESSAGING_QUEUES, null),
+		);
+
 		registerShortcut(GlobalShortcuts.NavigateToAlerts, () =>
 			onClickHandler(ROUTES.LIST_ALL_ALERT, null),
 		);
@@ -341,19 +350,19 @@ function SideNav({
 		);
 
 		return (): void => {
-			deregisterShortcut(GlobalShortcuts.SidebarCollapse);
 			deregisterShortcut(GlobalShortcuts.NavigateToServices);
 			deregisterShortcut(GlobalShortcuts.NavigateToTraces);
 			deregisterShortcut(GlobalShortcuts.NavigateToLogs);
 			deregisterShortcut(GlobalShortcuts.NavigateToDashboards);
 			deregisterShortcut(GlobalShortcuts.NavigateToAlerts);
 			deregisterShortcut(GlobalShortcuts.NavigateToExceptions);
+			deregisterShortcut(GlobalShortcuts.NavigateToMessagingQueues);
 		};
-	}, [deregisterShortcut, onClickHandler, onCollapse, registerShortcut]);
+	}, [deregisterShortcut, onClickHandler, registerShortcut]);
 
 	return (
-		<div className={cx('sidenav-container', !collapsed ? 'docked' : '')}>
-			<div className={cx('sideNav', !collapsed ? 'docked' : '')}>
+		<div className={cx('sidenav-container')}>
+			<div className={cx('sideNav')}>
 				<div className="brand">
 					<div className="brand-company-meta">
 						<div
@@ -373,17 +382,6 @@ function SideNav({
 							<div className="license tag nav-item-label">{licenseTag}</div>
 						)}
 					</div>
-
-					<Tooltip
-						title={collapsed ? 'Dock Sidebar' : 'Undock Sidebar'}
-						placement="right"
-					>
-						<Button
-							className="periscope-btn nav-item-label dockBtn"
-							icon={<PanelRight size={16} />}
-							onClick={onCollapse}
-						/>
-					</Tooltip>
 				</div>
 
 				{isCloudUserVal && (
@@ -440,6 +438,10 @@ function SideNav({
 									isActive={activeMenuKey === item?.key}
 									onClick={(event: MouseEvent): void => {
 										handleUserManagentMenuItemClick(item?.key as string, event);
+										logEvent('Sidebar: Menu clicked', {
+											menuRoute: item?.key,
+											menuLabel: item?.label,
+										});
 									}}
 								/>
 							),
@@ -456,6 +458,10 @@ function SideNav({
 									} else {
 										history.push(`${inviteMemberMenuItem.key}`);
 									}
+									logEvent('Sidebar: Menu clicked', {
+										menuRoute: inviteMemberMenuItem?.key,
+										menuLabel: inviteMemberMenuItem?.label,
+									});
 								}}
 							/>
 						)}
@@ -470,17 +476,13 @@ function SideNav({
 										userSettingsMenuItem?.key as string,
 										event,
 									);
+									logEvent('Sidebar: Menu clicked', {
+										menuRoute: userSettingsMenuItem?.key,
+										menuLabel: 'User',
+									});
 								}}
 							/>
 						)}
-
-						<div className="collapse-expand-handlers" onClick={onCollapse}>
-							{collapsed ? (
-								<ChevronRightCircle size={18} />
-							) : (
-								<ChevronLeftCircle size={18} />
-							)}
-						</div>
 					</div>
 				</div>
 			</div>

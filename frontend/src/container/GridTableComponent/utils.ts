@@ -1,4 +1,6 @@
+/* eslint-disable sonarjs/cognitive-complexity */
 import { ColumnsType, ColumnType } from 'antd/es/table';
+import { convertUnit } from 'container/NewWidget/RightContainer/dataFormatCategories';
 import { ThresholdProps } from 'container/NewWidget/RightContainer/Threshold/types';
 import { QUERY_TABLE_CONFIG } from 'container/QueryTable/config';
 import { QueryTableProps } from 'container/QueryTable/QueryTable.intefaces';
@@ -29,10 +31,39 @@ function evaluateCondition(
 	}
 }
 
+/**
+ * Evaluates whether a given value meets a specified threshold condition.
+ * It first converts the value to the appropriate unit if a threshold unit is provided,
+ * and then checks the condition using the specified operator.
+ *
+ * @param value - The value to be evaluated.
+ * @param thresholdValue - The threshold value to compare against.
+ * @param thresholdOperator - The operator used for comparison (e.g., '>', '<', '==').
+ * @param thresholdUnit - The unit to which the value should be converted.
+ * @param columnUnit - The current unit of the value.
+ * @returns A boolean indicating whether the value meets the threshold condition.
+ */
+function evaluateThresholdWithConvertedValue(
+	value: number,
+	thresholdValue: number,
+	thresholdOperator?: string,
+	thresholdUnit?: string,
+	columnUnit?: string,
+): boolean {
+	const convertedValue = convertUnit(value, columnUnit, thresholdUnit);
+
+	if (convertedValue) {
+		return evaluateCondition(thresholdOperator, convertedValue, thresholdValue);
+	}
+
+	return evaluateCondition(thresholdOperator, value, thresholdValue);
+}
+
 export function findMatchingThreshold(
 	thresholds: ThresholdProps[],
 	label: string,
 	value: number,
+	columnUnit?: string,
 ): {
 	threshold: ThresholdProps;
 	hasMultipleMatches: boolean;
@@ -44,10 +75,12 @@ export function findMatchingThreshold(
 		if (
 			threshold.thresholdValue !== undefined &&
 			threshold.thresholdTableOptions === label &&
-			evaluateCondition(
-				threshold.thresholdOperator,
+			evaluateThresholdWithConvertedValue(
 				value,
-				threshold.thresholdValue,
+				threshold?.thresholdValue,
+				threshold.thresholdOperator,
+				threshold.thresholdUnit,
+				columnUnit,
 			)
 		) {
 			matchingThresholds.push(threshold);
@@ -105,6 +138,39 @@ export function getQueryLegend(
 	return legend;
 }
 
+export function sortFunction(
+	a: RowData,
+	b: RowData,
+	item: {
+		name: string;
+		queryName: string;
+		isValueColumn: boolean;
+	},
+): number {
+	// assumption :- number values is bigger than 'n/a'
+	const valueA = Number(a[`${item.name}_without_unit`] ?? a[item.name]);
+	const valueB = Number(b[`${item.name}_without_unit`] ?? b[item.name]);
+
+	// if both the values are numbers then return the difference here
+	if (!isNaN(valueA) && !isNaN(valueB)) {
+		return valueA - valueB;
+	}
+
+	// if valueB is a number then make it bigger value
+	if (isNaN(valueA) && !isNaN(valueB)) {
+		return -1;
+	}
+
+	// if valueA is number make it the bigger value
+	if (!isNaN(valueA) && isNaN(valueB)) {
+		return 1;
+	}
+
+	// if both of them are strings do the localecompare
+	return ((a[item.name] as string) || '').localeCompare(
+		(b[item.name] as string) || '',
+	);
+}
 export function createColumnsAndDataSource(
 	data: TableData,
 	currentQuery: Query,
@@ -123,18 +189,7 @@ export function createColumnsAndDataSource(
 				title: !isEmpty(legend) ? legend : item.name,
 				width: QUERY_TABLE_CONFIG.width,
 				render: renderColumnCell && renderColumnCell[item.name],
-				sorter: (a: RowData, b: RowData): number => {
-					const valueA = Number(a[`${item.name}_without_unit`] ?? a[item.name]);
-					const valueB = Number(b[`${item.name}_without_unit`] ?? b[item.name]);
-
-					if (!isNaN(valueA) && !isNaN(valueB)) {
-						return valueA - valueB;
-					}
-
-					return ((a[item.name] as string) || '').localeCompare(
-						(b[item.name] as string) || '',
-					);
-				},
+				sorter: (a: RowData, b: RowData): number => sortFunction(a, b, item),
 			};
 
 			return [...acc, column];

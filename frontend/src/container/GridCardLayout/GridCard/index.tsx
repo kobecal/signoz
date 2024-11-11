@@ -11,9 +11,11 @@ import { isEqual } from 'lodash-es';
 import isEmpty from 'lodash-es/isEmpty';
 import { useDashboard } from 'providers/Dashboard/Dashboard';
 import { memo, useEffect, useRef, useState } from 'react';
+import { useQueryClient } from 'react-query';
 import { useDispatch, useSelector } from 'react-redux';
 import { UpdateTimeInterval } from 'store/actions';
 import { AppState } from 'store/reducers';
+import { DataSource } from 'types/common/queryBuilder';
 import { GlobalReducer } from 'types/reducer/globalTime';
 import { getGraphType } from 'utils/getGraphType';
 import { getSortedSeriesData } from 'utils/getSortedSeriesData';
@@ -21,6 +23,7 @@ import { getSortedSeriesData } from 'utils/getSortedSeriesData';
 import EmptyWidget from '../EmptyWidget';
 import { MenuItemKeys } from '../WidgetHeader/contants';
 import { GridCardGraphProps } from './types';
+import { isDataAvailableByPanelType } from './utils';
 import WidgetGraphComponent from './WidgetGraphComponent';
 
 function GridCardGraph({
@@ -32,6 +35,8 @@ function GridCardGraph({
 	version,
 	onClickHandler,
 	onDragSelect,
+	customTooltipElement,
+	dataAvailable,
 }: GridCardGraphProps): JSX.Element {
 	const dispatch = useDispatch();
 	const [errorMessage, setErrorMessage] = useState<string>();
@@ -44,6 +49,7 @@ function GridCardGraph({
 		AppState,
 		GlobalReducer
 	>((state) => state.globalTime);
+	const queryClient = useQueryClient();
 
 	const handleBackNavigation = (): void => {
 		const searchParams = new URLSearchParams(window.location.search);
@@ -113,6 +119,7 @@ function GridCardGraph({
 			};
 		}
 		updatedQuery.builder.queryData[0].pageSize = 10;
+		const initialDataSource = updatedQuery.builder.queryData[0].dataSource;
 		return {
 			query: updatedQuery,
 			graphType: PANEL_TYPES.LIST,
@@ -123,10 +130,32 @@ function GridCardGraph({
 					offset: 0,
 					limit: updatedQuery.builder.queryData[0].limit || 0,
 				},
+				// we do not need select columns in case of logs
+				selectColumns:
+					initialDataSource === DataSource.TRACES && widget.selectedTracesFields,
 			},
 			fillGaps: widget.fillSpans,
 		};
 	});
+
+	// TODO [vikrantgupta25] remove this useEffect with refactor as this is prone to race condition
+	// this is added to tackle the case of async communication between VariableItem.tsx and GridCard.tsx
+	useEffect(() => {
+		if (variablesToGetUpdated.length > 0) {
+			queryClient.cancelQueries([
+				maxTime,
+				minTime,
+				globalSelectedInterval,
+				variables,
+				widget?.query,
+				widget?.panelTypes,
+				widget.timePreferance,
+				widget.fillSpans,
+				requestData,
+			]);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [variablesToGetUpdated]);
 
 	useEffect(() => {
 		if (!isEqual(updatedQuery, requestData.query)) {
@@ -174,6 +203,11 @@ function GridCardGraph({
 			onError: (error) => {
 				setErrorMessage(error.message);
 			},
+			onSettled: (data) => {
+				dataAvailable?.(
+					isDataAvailableByPanelType(data?.payload?.data, widget?.panelTypes),
+				);
+			},
 		},
 	);
 
@@ -210,6 +244,7 @@ function GridCardGraph({
 					setRequestData={setRequestData}
 					onClickHandler={onClickHandler}
 					onDragSelect={onDragSelect}
+					customTooltipElement={customTooltipElement}
 				/>
 			)}
 		</div>

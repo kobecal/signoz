@@ -25,6 +25,11 @@ var ConfigSignozIo = "https://config.signoz.io/api/v1"
 
 var DEFAULT_TELEMETRY_ANONYMOUS = false
 
+func IsOSSTelemetryEnabled() bool {
+	ossSegmentKey := GetOrDefaultEnv("OSS_TELEMETRY_ENABLED", "true")
+	return ossSegmentKey == "true"
+}
+
 const MaxAllowedPointsInTimeSeries = 300
 
 func IsTelemetryEnabled() bool {
@@ -55,6 +60,10 @@ func GetAlertManagerApiPrefix() string {
 	return "http://alertmanager:9093/api/"
 }
 
+var TELEMETRY_HEART_BEAT_DURATION_MINUTES = GetOrDefaultEnvInt("TELEMETRY_HEART_BEAT_DURATION_MINUTES", 720)
+
+var TELEMETRY_ACTIVE_USER_DURATION_MINUTES = GetOrDefaultEnvInt("TELEMETRY_ACTIVE_USER_DURATION_MINUTES", 360)
+
 var InviteEmailTemplate = GetOrDefaultEnv("INVITE_EMAIL_TEMPLATE", "/root/templates/invitation_email_template.html")
 
 // Alert manager channel subpath
@@ -70,6 +79,13 @@ var DurationSortFeature = GetOrDefaultEnv("DURATION_SORT_FEATURE", "true")
 var TimestampSortFeature = GetOrDefaultEnv("TIMESTAMP_SORT_FEATURE", "true")
 
 var PreferRPMFeature = GetOrDefaultEnv("PREFER_RPM_FEATURE", "false")
+
+// TODO(srikanthccv): remove after backfilling is done
+func UseMetricsPreAggregation() bool {
+	return GetOrDefaultEnv("USE_METRICS_PRE_AGGREGATION", "true") == "true"
+}
+
+var KafkaSpanEval = GetOrDefaultEnv("KAFKA_SPAN_EVAL", "false")
 
 func IsDurationSortFeatureEnabled() bool {
 	isDurationSortFeatureEnabledStr := DurationSortFeature
@@ -148,6 +164,15 @@ func GetContextTimeoutMaxAllowed() time.Duration {
 	return contextTimeoutDuration
 }
 
+func GetEvalDelay() time.Duration {
+	evalDelayStr := GetOrDefaultEnv("RULES_EVAL_DELAY", "2m")
+	evalDelayDuration, err := time.ParseDuration(evalDelayStr)
+	if err != nil {
+		return 0
+	}
+	return evalDelayDuration
+}
+
 var ContextTimeoutMaxAllowed = GetContextTimeoutMaxAllowed()
 
 const (
@@ -202,14 +227,19 @@ var GroupByColMap = map[string]struct{}{
 }
 
 const (
-	SIGNOZ_METRIC_DBNAME                      = "signoz_metrics"
-	SIGNOZ_SAMPLES_V4_TABLENAME               = "distributed_samples_v4"
-	SIGNOZ_TRACE_DBNAME                       = "signoz_traces"
-	SIGNOZ_SPAN_INDEX_TABLENAME               = "distributed_signoz_index_v2"
-	SIGNOZ_TIMESERIES_v4_LOCAL_TABLENAME      = "time_series_v4"
-	SIGNOZ_TIMESERIES_v4_6HRS_LOCAL_TABLENAME = "time_series_v4_6hrs"
-	SIGNOZ_TIMESERIES_v4_1DAY_LOCAL_TABLENAME = "time_series_v4_1day"
-	SIGNOZ_TIMESERIES_v4_1DAY_TABLENAME       = "distributed_time_series_v4_1day"
+	SIGNOZ_METRIC_DBNAME                       = "signoz_metrics"
+	SIGNOZ_SAMPLES_V4_TABLENAME                = "distributed_samples_v4"
+	SIGNOZ_SAMPLES_V4_AGG_5M_TABLENAME         = "distributed_samples_v4_agg_5m"
+	SIGNOZ_SAMPLES_V4_AGG_30M_TABLENAME        = "distributed_samples_v4_agg_30m"
+	SIGNOZ_EXP_HISTOGRAM_TABLENAME             = "distributed_exp_hist"
+	SIGNOZ_TRACE_DBNAME                        = "signoz_traces"
+	SIGNOZ_SPAN_INDEX_TABLENAME                = "distributed_signoz_index_v2"
+	SIGNOZ_SPAN_INDEX_LOCAL_TABLENAME          = "signoz_index_v2"
+	SIGNOZ_TIMESERIES_v4_LOCAL_TABLENAME       = "time_series_v4"
+	SIGNOZ_TIMESERIES_v4_6HRS_LOCAL_TABLENAME  = "time_series_v4_6hrs"
+	SIGNOZ_TIMESERIES_v4_1DAY_LOCAL_TABLENAME  = "time_series_v4_1day"
+	SIGNOZ_TIMESERIES_v4_1WEEK_LOCAL_TABLENAME = "time_series_v4_1week"
+	SIGNOZ_TIMESERIES_v4_1DAY_TABLENAME        = "distributed_time_series_v4_1day"
 )
 
 var TimeoutExcludedRoutes = map[string]bool{
@@ -230,6 +260,18 @@ func GetOrDefaultEnv(key string, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func GetOrDefaultEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if len(v) == 0 {
+		return fallback
+	}
+	intVal, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return intVal
 }
 
 const (
@@ -286,8 +328,18 @@ const (
 		"CAST((attributes_float64_key, attributes_float64_value), 'Map(String, Float64)') as  attributes_float64," +
 		"CAST((attributes_bool_key, attributes_bool_value), 'Map(String, Bool)') as  attributes_bool," +
 		"CAST((resources_string_key, resources_string_value), 'Map(String, String)') as resources_string "
-	TracesExplorerViewSQLSelectWithSubQuery = "WITH subQuery AS (SELECT distinct on (traceID) traceID, durationNano, " +
-		"serviceName, name FROM %s.%s WHERE parentSpanID = '' AND %s %s ORDER BY durationNano DESC "
+	LogsSQLSelectV2 = "SELECT " +
+		"timestamp, id, trace_id, span_id, trace_flags, severity_text, severity_number, body, " +
+		"attributes_string, " +
+		"attributes_number, " +
+		"attributes_bool, " +
+		"resources_string "
+	TracesExplorerViewSQLSelectWithSubQuery = "(SELECT traceID, durationNano, " +
+		"serviceName, name FROM %s.%s WHERE parentSpanID = '' AND %s %s ORDER BY durationNano DESC LIMIT 1 BY traceID "
+	TracesExplorerViewSQLSelectBeforeSubQuery = "SELECT subQuery.serviceName, subQuery.name, count() AS " +
+		"span_count, subQuery.durationNano, subQuery.traceID AS traceID FROM %s.%s INNER JOIN ( SELECT * FROM "
+	TracesExplorerViewSQLSelectAfterSubQuery = "AS inner_subquery ) AS subQuery ON %s.%s.traceID = subQuery.traceID WHERE %s " +
+		"GROUP BY subQuery.traceID, subQuery.durationNano, subQuery.name, subQuery.serviceName ORDER BY subQuery.durationNano desc LIMIT 1 BY subQuery.traceID;"
 	TracesExplorerViewSQLSelectQuery = "SELECT subQuery.serviceName, subQuery.name, count() AS " +
 		"span_count, subQuery.durationNano, traceID FROM %s.%s GLOBAL INNER JOIN subQuery ON %s.traceID = subQuery.traceID GROUP " +
 		"BY traceID, subQuery.durationNano, subQuery.name, subQuery.serviceName ORDER BY subQuery.durationNano desc;"
@@ -305,7 +357,9 @@ var ReservedColumnTargetAliases = map[string]struct{}{
 }
 
 // logsPPLPfx is a short constant for logsPipelinePrefix
-const LogsPPLPfx = "logstransform/pipeline_"
+// TODO(Raj): Remove old prefix after new processor based pipelines have been rolled out
+const LogsPPLPfx = "signozlogspipeline/pipeline_"
+const OldLogsPPLPfx = "logstransform/pipeline_"
 
 const IntegrationPipelineIdPrefix = "integration"
 
@@ -350,6 +404,12 @@ var StaticFieldsLogsV3 = map[string]v3.AttributeKey{
 		Type:     v3.AttributeKeyTypeUnspecified,
 		IsColumn: true,
 	},
+	"__attrs": {
+		Key:      "__attrs",
+		DataType: v3.AttributeKeyDataTypeString,
+		Type:     v3.AttributeKeyTypeUnspecified,
+		IsColumn: true,
+	},
 }
 
 const SigNozOrderByValue = "#SIGNOZ_VALUE"
@@ -359,35 +419,10 @@ const TIMESTAMP = "timestamp"
 const FirstQueryGraphLimit = "first_query_graph_limit"
 const SecondQueryGraphLimit = "second_query_graph_limit"
 
-var TracesListViewDefaultSelectedColumns = []v3.AttributeKey{
-	{
-		Key:      "serviceName",
-		DataType: v3.AttributeKeyDataTypeString,
-		Type:     v3.AttributeKeyTypeTag,
-		IsColumn: true,
-	},
-	{
-		Key:      "name",
-		DataType: v3.AttributeKeyDataTypeString,
-		Type:     v3.AttributeKeyTypeTag,
-		IsColumn: true,
-	},
-	{
-		Key:      "durationNano",
-		DataType: v3.AttributeKeyDataTypeArrayFloat64,
-		Type:     v3.AttributeKeyTypeTag,
-		IsColumn: true,
-	},
-	{
-		Key:      "httpMethod",
-		DataType: v3.AttributeKeyDataTypeString,
-		Type:     v3.AttributeKeyTypeTag,
-		IsColumn: true,
-	},
-	{
-		Key:      "responseStatusCode",
-		DataType: v3.AttributeKeyDataTypeString,
-		Type:     v3.AttributeKeyTypeTag,
-		IsColumn: true,
-	},
-}
+const DefaultFilterSuggestionsAttributesLimit = 50
+const MaxFilterSuggestionsAttributesLimit = 100
+const DefaultFilterSuggestionsExamplesLimit = 2
+const MaxFilterSuggestionsExamplesLimit = 10
+
+var SpanRenderLimitStr = GetOrDefaultEnv("SPAN_RENDER_LIMIT", "2500")
+var MaxSpansInTraceStr = GetOrDefaultEnv("MAX_SPANS_IN_TRACE", "250000")

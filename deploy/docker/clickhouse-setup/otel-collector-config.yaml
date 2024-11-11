@@ -152,13 +152,13 @@ exporters:
   clickhouselogsexporter:
     dsn: tcp://clickhouse:9000/signoz_logs
     timeout: 10s
-    use_new_schema: true
+    use_new_schema: false
   # logging: {}
 
 service:
   telemetry:
-    logs:
-      encoding: json
+	  logs:
+		  encoding: json
     metrics:
       address: 0.0.0.0:8888
   extensions:

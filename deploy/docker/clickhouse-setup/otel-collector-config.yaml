@@ -152,7 +152,7 @@ exporters:
   clickhouselogsexporter:
     dsn: tcp://clickhouse:9000/signoz_logs
     timeout: 10s
-    use_new_schema: false
+    use_new_schema: true
   # logging: {}
 
 service:

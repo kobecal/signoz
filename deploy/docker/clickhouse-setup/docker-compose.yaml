@@ -167,7 +167,7 @@ services:
     command:
       [
         "-config=/root/config/prometheus.yml",
-        "--use-logs-new-schema=false"
+        "--use-logs-new-schema=true"
       ]
     # ports:
     #   - "6060:6060"     # pprof port

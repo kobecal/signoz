@@ -75,8 +75,10 @@ export const GroupByFilter = memo(function GroupByFilter({
 										prefix: item.type || '',
 										condition: !item.isColumn,
 									}),
+									!item.isColumn && item.type ? item.type : '',
 								)}
 								dataType={item.dataType || ''}
+								type={item.type || ''}
 							/>
 						),
 						value: `${item.id}`,
@@ -166,6 +168,7 @@ export const GroupByFilter = memo(function GroupByFilter({
 						prefix: item.type || '',
 						condition: !item.isColumn,
 					}),
+					!item.isColumn && item.type ? item.type : '',
 				)}`,
 				value: `${item.id}`,
 			}),
@@ -191,6 +194,7 @@ export const GroupByFilter = memo(function GroupByFilter({
 			labelInValue
 			notFoundContent={isFetching ? <Spin size="small" /> : null}
 			onChange={handleChange}
+			data-testid="group-by"
 		/>
 	);
 });

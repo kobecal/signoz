@@ -1,6 +1,7 @@
 import './TracesTableComponent.styles.scss';
 
 import { Table } from 'antd';
+import OverlayScrollbar from 'components/OverlayScrollbar/OverlayScrollbar';
 import { SOMETHING_WENT_WRONG } from 'constants/api';
 import Controls from 'container/Controls';
 import { PER_PAGE_OPTIONS } from 'container/TracesExplorer/ListView/configs';
@@ -14,6 +15,7 @@ import { Pagination } from 'hooks/queryPagination';
 import { GetQueryResultsProps } from 'lib/dashboard/getQueryResults';
 import history from 'lib/history';
 import { RowData } from 'lib/query/createTableColumnsFromQuery';
+import { useTimezone } from 'providers/Timezone';
 import {
 	Dispatch,
 	HTMLAttributes,
@@ -42,12 +44,18 @@ function TracesTableComponent({
 		setRequestData((prev) => ({
 			...prev,
 			tableParams: {
+				...prev.tableParams,
 				pagination,
 			},
 		}));
 	}, [pagination, setRequestData]);
 
-	const columns = getListColumns(widget.selectedTracesFields || []);
+	const { formatTimezoneAdjustedTimestamp } = useTimezone();
+
+	const columns = getListColumns(
+		widget.selectedTracesFields || [],
+		formatTimezoneAdjustedTimestamp,
+	);
 
 	const dataLength =
 		queryResponse.data?.payload?.data?.newResult?.data?.result[0]?.list?.length;
@@ -86,17 +94,19 @@ function TracesTableComponent({
 	return (
 		<div className="traces-table">
 			<div className="resize-table">
-				<Table
-					pagination={false}
-					tableLayout="fixed"
-					scroll={{ x: true }}
-					loading={queryResponse.isFetching}
-					style={tableStyles}
-					dataSource={transformedQueryTableData}
-					columns={columns}
-					onRow={handleRow}
-					sticky
-				/>
+				<OverlayScrollbar>
+					<Table
+						pagination={false}
+						tableLayout="fixed"
+						scroll={{ x: true }}
+						loading={queryResponse.isFetching}
+						style={tableStyles}
+						dataSource={transformedQueryTableData}
+						columns={columns}
+						onRow={handleRow}
+						sticky
+					/>
+				</OverlayScrollbar>
 			</div>
 			<div className="controller">
 				<Controls

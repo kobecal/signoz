@@ -7,7 +7,9 @@ import LogsError from 'container/LogsError/LogsError';
 import { LogsLoading } from 'container/LogsLoading/LogsLoading';
 import NoLogs from 'container/NoLogs/NoLogs';
 import { CustomTimeType } from 'container/TopNav/DateTimeSelectionV2/config';
+import { TracesLoading } from 'container/TracesExplorer/TraceLoading/TraceLoading';
 import { useIsDarkMode } from 'hooks/useDarkMode';
+import { useResizeObserver } from 'hooks/useDimensions';
 import useUrlQuery from 'hooks/useUrlQuery';
 import GetMinMax from 'lib/getMinMax';
 import getTimeString from 'lib/getTimeString';
@@ -15,6 +17,7 @@ import history from 'lib/history';
 import { getUPlotChartOptions } from 'lib/uPlotLib/getUplotChartOptions';
 import { getUPlotChartData } from 'lib/uPlotLib/utils/getUplotChartData';
 import { isEmpty } from 'lodash-es';
+import { useTimezone } from 'providers/Timezone';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useLocation } from 'react-router-dom';
@@ -24,6 +27,7 @@ import { SuccessResponse } from 'types/api';
 import { MetricRangePayloadProps } from 'types/api/metrics/getQueryRange';
 import { DataSource } from 'types/common/queryBuilder';
 import { GlobalReducer } from 'types/reducer/globalTime';
+import uPlot from 'uplot';
 import { getTimeRange } from 'utils/getTimeRange';
 
 import { Container } from './styles';
@@ -47,14 +51,7 @@ function TimeSeriesView({
 	]);
 
 	const isDarkMode = useIsDarkMode();
-
-	const width = graphRef.current?.clientWidth
-		? graphRef.current.clientWidth
-		: 700;
-
-	const height = graphRef.current?.clientWidth
-		? graphRef.current.clientHeight
-		: 300;
+	const containerDimensions = useResizeObserver(graphRef);
 
 	const [minTimeScale, setMinTimeScale] = useState<number>();
 	const [maxTimeScale, setMaxTimeScale] = useState<number>();
@@ -123,19 +120,24 @@ function TimeSeriesView({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
+	const { timezone } = useTimezone();
+
 	const chartOptions = getUPlotChartOptions({
 		onDragSelect,
 		yAxisUnit: yAxisUnit || '',
 		apiResponse: data?.payload,
 		dimensions: {
-			width,
-			height,
+			width: containerDimensions.width,
+			height: containerDimensions.height,
 		},
 		isDarkMode,
 		minTimeScale,
 		maxTimeScale,
 		softMax: null,
 		softMin: null,
+		tzDate: (timestamp: number) =>
+			uPlot.tzDate(new Date(timestamp * 1e3), timezone.value),
+		timezone: timezone.value,
 	});
 
 	return (
@@ -145,15 +147,19 @@ function TimeSeriesView({
 				className="graph-container"
 				style={{ height: '100%', width: '100%' }}
 				ref={graphRef}
+				data-testid="time-series-graph"
 			>
-				{isLoading && <LogsLoading />}
+				{isLoading &&
+					(dataSource === DataSource.LOGS ? <LogsLoading /> : <TracesLoading />)}
 
 				{chartData &&
 					chartData[0] &&
 					chartData[0]?.length === 0 &&
 					!isLoading &&
 					!isError &&
-					isFilterApplied && <EmptyLogsSearch />}
+					isFilterApplied && (
+						<EmptyLogsSearch dataSource={dataSource} panelType="TIME_SERIES" />
+					)}
 
 				{chartData &&
 					chartData[0] &&

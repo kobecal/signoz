@@ -21,20 +21,21 @@ import {
 	Typography,
 } from 'antd';
 import { TableProps } from 'antd/lib';
+import logEvent from 'api/common/logEvent';
 import createDashboard from 'api/dashboard/create';
 import { AxiosError } from 'axios';
 import cx from 'classnames';
-import FacingIssueBtn from 'components/facingIssueBtn/FacingIssueBtn';
-import { dashboardListMessage } from 'components/facingIssueBtn/util';
 import { ENTITY_VERSION_V4 } from 'constants/app';
 import ROUTES from 'constants/routes';
+import { sanitizeDashboardData } from 'container/NewDashboard/DashboardDescription';
+import { downloadObjectAsJson } from 'container/NewDashboard/DashboardDescription/utils';
 import { Base64Icons } from 'container/NewDashboard/DashboardSettings/General/utils';
 import dayjs from 'dayjs';
 import { useGetAllDashboard } from 'hooks/dashboard/useGetAllDashboard';
 import useComponentPermission from 'hooks/useComponentPermission';
 import { useNotifications } from 'hooks/useNotifications';
 import history from 'lib/history';
-import { get, isEmpty } from 'lodash-es';
+import { get, isEmpty, isUndefined } from 'lodash-es';
 import {
 	ArrowDownWideNarrow,
 	ArrowUpRight,
@@ -44,6 +45,9 @@ import {
 	Ellipsis,
 	EllipsisVertical,
 	Expand,
+	ExternalLink,
+	FileJson,
+	Github,
 	HdmiPort,
 	LayoutGrid,
 	Link2,
@@ -52,28 +56,38 @@ import {
 	RotateCw,
 	Search,
 } from 'lucide-react';
+// #TODO: lucide will be removing brand icons like Github in future, in that case we can use simple icons
+// see more: https://github.com/lucide-icons/lucide/issues/94
 import { handleContactSupport } from 'pages/Integrations/utils';
 import { useDashboard } from 'providers/Dashboard/Dashboard';
+import { useTimezone } from 'providers/Timezone';
 import {
 	ChangeEvent,
 	Key,
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from 'react';
+import { Layout } from 'react-grid-layout';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import { generatePath } from 'react-router-dom';
+import { generatePath, Link } from 'react-router-dom';
 import { useCopyToClipboard } from 'react-use';
 import { AppState } from 'store/reducers';
-import { Dashboard } from 'types/api/dashboard/getAll';
+import {
+	Dashboard,
+	IDashboardVariable,
+	WidgetRow,
+	Widgets,
+} from 'types/api/dashboard/getAll';
 import AppReducer from 'types/reducer/app';
 import { isCloudUser } from 'utils/app';
 
-import useUrlQuery from '../../hooks/useUrlQuery';
 import DashboardTemplatesModal from './DashboardTemplates/DashboardTemplatesModal';
 import ImportJSON from './ImportJSON';
+import { RequestDashboardBtn } from './RequestDashboardBtn';
 import { DeleteButton } from './TableComponents/DeleteButton';
 import {
 	DashboardDynamicColumns,
@@ -84,8 +98,9 @@ import {
 // eslint-disable-next-line sonarjs/cognitive-complexity
 function DashboardsList(): JSX.Element {
 	const {
-		data: dashboardListResponse = [],
+		data: dashboardListResponse,
 		isLoading: isDashboardListLoading,
+		isRefetching: isDashboardListRefetching,
 		error: dashboardFetchError,
 		refetch: refetchDashboardList,
 	} = useGetAllDashboard();
@@ -97,12 +112,14 @@ function DashboardsList(): JSX.Element {
 		setListSortOrder: setSortOrder,
 	} = useDashboard();
 
+	const [searchString, setSearchString] = useState<string>(
+		sortOrder.search || '',
+	);
 	const [action, createNewDashboard] = useComponentPermission(
 		['action', 'create_new_dashboards'],
 		role,
 	);
 
-	const [searchValue, setSearchValue] = useState<string>('');
 	const [
 		showNewDashboardTemplatesModal,
 		setShowNewDashboardTemplatesModal,
@@ -120,10 +137,6 @@ function DashboardsList(): JSX.Element {
 	const [isConfigureMetadataOpen, setIsConfigureMetadata] = useState<boolean>(
 		false,
 	);
-
-	const params = useUrlQuery();
-	const searchParams = params.get('search');
-	const [searchString, setSearchString] = useState<string>(searchParams || '');
 
 	const getLocalStorageDynamicColumns = (): DashboardDynamicColumns => {
 		const dashboardDynamicColumnsString = localStorage.getItem('dashboard');
@@ -186,14 +199,6 @@ function DashboardsList(): JSX.Element {
 		setDashboards(sortedDashboards);
 	};
 
-	useEffect(() => {
-		params.set('columnKey', sortOrder.columnKey as string);
-		params.set('order', sortOrder.order as string);
-		params.set('page', sortOrder.pagination || '1');
-		history.replace({ search: params.toString() });
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [sortOrder]);
-
 	const sortHandle = (key: string): void => {
 		if (!dashboards) return;
 		if (key === 'createdAt') {
@@ -202,6 +207,7 @@ function DashboardsList(): JSX.Element {
 				columnKey: 'createdAt',
 				order: 'descend',
 				pagination: sortOrder.pagination || '1',
+				search: sortOrder.search || '',
 			});
 		} else if (key === 'updatedAt') {
 			sortDashboardsByUpdatedAt(dashboards);
@@ -209,21 +215,19 @@ function DashboardsList(): JSX.Element {
 				columnKey: 'updatedAt',
 				order: 'descend',
 				pagination: sortOrder.pagination || '1',
+				search: sortOrder.search || '',
 			});
 		}
 	};
 
 	function handlePageSizeUpdate(page: number): void {
-		setSortOrder((order) => ({
-			...order,
-			pagination: String(page),
-		}));
+		setSortOrder({ ...sortOrder, pagination: String(page) });
 	}
 
 	useEffect(() => {
 		const filteredDashboards = filterDashboard(
 			searchString,
-			dashboardListResponse,
+			dashboardListResponse || [],
 		);
 		if (sortOrder.columnKey === 'updatedAt') {
 			sortDashboardsByUpdatedAt(filteredDashboards || []);
@@ -234,6 +238,7 @@ function DashboardsList(): JSX.Element {
 				columnKey: 'updatedAt',
 				order: 'descend',
 				pagination: sortOrder.pagination || '1',
+				search: sortOrder.search || '',
 			});
 			sortDashboardsByUpdatedAt(filteredDashboards || []);
 		}
@@ -243,6 +248,7 @@ function DashboardsList(): JSX.Element {
 		setSortOrder,
 		sortOrder.columnKey,
 		sortOrder.pagination,
+		sortOrder.search,
 	]);
 
 	const [newDashboardState, setNewDashboardState] = useState({
@@ -264,11 +270,17 @@ function DashboardsList(): JSX.Element {
 			isLocked: !!e.isLocked || false,
 			lastUpdatedBy: e.updated_by,
 			image: e.data.image || Base64Icons[0],
+			variables: e.data.variables,
+			widgets: e.data.widgets,
+			layout: e.data.layout,
+			panelMap: e.data.panelMap,
+			version: e.data.version,
 			refetchDashboardList,
 		})) || [];
 
 	const onNewDashboardHandler = useCallback(async () => {
 		try {
+			logEvent('Dashboard List: Create dashboard clicked', {});
 			setNewDashboardState({
 				...newDashboardState,
 				loading: true,
@@ -305,18 +317,23 @@ function DashboardsList(): JSX.Element {
 	}, [newDashboardState, t]);
 
 	const onModalHandler = (uploadedGrafana: boolean): void => {
+		logEvent('Dashboard List: Import JSON clicked', {});
+
 		setIsImportJSONModalVisible((state) => !state);
 		setUploadedGrafana(uploadedGrafana);
 	};
 
 	const handleSearch = (event: ChangeEvent<HTMLInputElement>): void => {
 		setIsFilteringDashboards(true);
-		setSearchValue(event.target.value);
 		const searchText = (event as React.BaseSyntheticEvent)?.target?.value || '';
-		const filteredDashboards = filterDashboard(searchText, dashboardListResponse);
+		const filteredDashboards = filterDashboard(
+			searchText,
+			dashboardListResponse || [],
+		);
 		setDashboards(filteredDashboards);
 		setIsFilteringDashboards(false);
 		setSearchString(searchText);
+		setSortOrder({ ...sortOrder, search: searchText });
 	};
 
 	const [state, setCopy] = useCopyToClipboard();
@@ -341,31 +358,13 @@ function DashboardsList(): JSX.Element {
 		}
 	}, [state.error, state.value, t, notifications]);
 
+	const { formatTimezoneAdjustedTimestamp } = useTimezone();
+
 	function getFormattedTime(dashboard: Dashboard, option: string): string {
-		const timeOptions: Intl.DateTimeFormatOptions = {
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			hour12: false,
-		};
-		const formattedTime = new Date(get(dashboard, option, '')).toLocaleTimeString(
-			'en-US',
-			timeOptions,
+		return formatTimezoneAdjustedTimestamp(
+			get(dashboard, option, ''),
+			'MMM D, YYYY ⎯ hh:mm:ss A (UTC Z)',
 		);
-
-		const dateOptions: Intl.DateTimeFormatOptions = {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-		};
-
-		const formattedDate = new Date(get(dashboard, option, '')).toLocaleDateString(
-			'en-US',
-			dateOptions,
-		);
-
-		// Combine time and date
-		return `${formattedDate} ⎯ ${formattedTime}`;
 	}
 
 	const onLastUpdated = (time: string): string => {
@@ -407,115 +406,143 @@ function DashboardsList(): JSX.Element {
 		{
 			title: 'Dashboards',
 			key: 'dashboard',
-			render: (dashboard: Data): JSX.Element => {
-				const timeOptions: Intl.DateTimeFormatOptions = {
-					hour: '2-digit',
-					minute: '2-digit',
-					second: '2-digit',
-					hour12: false,
-				};
-				const formattedTime = new Date(dashboard.createdAt).toLocaleTimeString(
-					'en-US',
-					timeOptions,
+			render: (dashboard: Data, _, index): JSX.Element => {
+				const formattedDateAndTime = formatTimezoneAdjustedTimestamp(
+					dashboard.createdAt,
+					'MMM D, YYYY ⎯ hh:mm:ss A (UTC Z)',
 				);
-
-				const dateOptions: Intl.DateTimeFormatOptions = {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				};
-
-				const formattedDate = new Date(dashboard.createdAt).toLocaleDateString(
-					'en-US',
-					dateOptions,
-				);
-
-				// Combine time and date
-				const formattedDateAndTime = `${formattedDate} ⎯ ${formattedTime}`;
 
 				const getLink = (): string => `${ROUTES.ALL_DASHBOARD}/${dashboard.id}`;
 
 				const onClickHandler = (event: React.MouseEvent<HTMLElement>): void => {
+					event.stopPropagation();
 					if (event.metaKey || event.ctrlKey) {
 						window.open(getLink(), '_blank');
 					} else {
 						history.push(getLink());
 					}
+					logEvent('Dashboard List: Clicked on dashboard', {
+						dashboardId: dashboard.id,
+						dashboardName: dashboard.name,
+					});
+				};
+
+				const handleJsonExport = (event: React.MouseEvent<HTMLElement>): void => {
+					event.stopPropagation();
+					event.preventDefault();
+					downloadObjectAsJson(
+						sanitizeDashboardData({ ...dashboard, title: dashboard.name }),
+						dashboard.name,
+					);
 				};
 
 				return (
 					<div className="dashboard-list-item" onClick={onClickHandler}>
 						<div className="title-with-action">
 							<div className="dashboard-title">
-								<img
-									src={dashboard?.image || Base64Icons[0]}
-									style={{ height: '14px', width: '14px' }}
-									alt="dashboard-image"
-								/>
-								<Typography.Text>{dashboard.name}</Typography.Text>
+								<Tooltip
+									title={dashboard?.name?.length > 50 ? dashboard?.name : ''}
+									placement="left"
+									overlayClassName="title-toolip"
+								>
+									<Link
+										to={getLink()}
+										className="title-link"
+										onClick={(e): void => e.stopPropagation()}
+									>
+										<img
+											src={dashboard?.image || Base64Icons[0]}
+											alt="dashboard-image"
+											className="dashboard-icon"
+										/>
+										<Typography.Text
+											data-testid={`dashboard-title-${index}`}
+											className="title"
+										>
+											{dashboard.name}
+										</Typography.Text>
+									</Link>
+								</Tooltip>
 							</div>
 
 							<div className="tags-with-actions">
 								{dashboard?.tags && dashboard.tags.length > 0 && (
 									<div className="dashboard-tags">
-										{dashboard.tags.map((tag) => (
+										{dashboard.tags.slice(0, 3).map((tag) => (
 											<Tag className="tag" key={tag}>
 												{tag}
 											</Tag>
 										))}
+
+										{dashboard.tags.length > 3 && (
+											<Tag className="tag" key={dashboard.tags[3]}>
+												+ <span> {dashboard.tags.length - 3} </span>
+											</Tag>
+										)}
 									</div>
 								)}
-								{action && (
-									<Popover
-										trigger="click"
-										content={
-											<div className="dashboard-action-content">
-												<section className="section-1">
-													<Button
-														type="text"
-														className="action-btn"
-														icon={<Expand size={14} />}
-														onClick={onClickHandler}
-													>
-														View
-													</Button>
-													<Button
-														type="text"
-														className="action-btn"
-														icon={<Link2 size={14} />}
-														onClick={(e): void => {
-															e.stopPropagation();
-															e.preventDefault();
-															setCopy(`${window.location.origin}${getLink()}`);
-														}}
-													>
-														Copy Link
-													</Button>
-												</section>
-												<section className="section-2">
-													<DeleteButton
-														name={dashboard.name}
-														id={dashboard.id}
-														isLocked={dashboard.isLocked}
-														createdBy={dashboard.createdBy}
-													/>
-												</section>
-											</div>
-										}
-										placement="bottomRight"
-										arrow={false}
-										rootClassName="dashboard-actions"
-									>
-										<EllipsisVertical
-											size={14}
-											onClick={(e): void => {
-												e.stopPropagation();
-												e.preventDefault();
-											}}
-										/>
-									</Popover>
-								)}
 							</div>
+
+							{action && (
+								<Popover
+									trigger="click"
+									content={
+										<div className="dashboard-action-content">
+											<section className="section-1">
+												<Button
+													type="text"
+													className="action-btn"
+													icon={<Expand size={12} />}
+													onClick={onClickHandler}
+												>
+													View
+												</Button>
+												<Button
+													type="text"
+													className="action-btn"
+													icon={<Link2 size={12} />}
+													onClick={(e): void => {
+														e.stopPropagation();
+														e.preventDefault();
+														setCopy(`${window.location.origin}${getLink()}`);
+													}}
+												>
+													Copy Link
+												</Button>
+												<Button
+													type="text"
+													className="action-btn"
+													icon={<FileJson size={12} />}
+													onClick={handleJsonExport}
+												>
+													Export JSON
+												</Button>
+											</section>
+											<section className="section-2">
+												<DeleteButton
+													name={dashboard.name}
+													id={dashboard.id}
+													isLocked={dashboard.isLocked}
+													createdBy={dashboard.createdBy}
+												/>
+											</section>
+										</div>
+									}
+									placement="bottomRight"
+									arrow={false}
+									rootClassName="dashboard-actions"
+								>
+									<EllipsisVertical
+										className="dashboard-action-icon"
+										size={14}
+										data-testid="dashboard-action-icon"
+										onClick={(e): void => {
+											e.stopPropagation();
+											e.preventDefault();
+										}}
+									/>
+								</Popover>
+							)}
 						</div>
 						<div className="dashboard-details">
 							<div className="dashboard-created-at">
@@ -579,6 +606,28 @@ function DashboardsList(): JSX.Element {
 				),
 				key: '1',
 			},
+			{
+				label: (
+					<a
+						href="https://github.com/SigNoz/dashboards"
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						<Flex
+							justify="space-between"
+							align="center"
+							style={{ width: '100%' }}
+							gap="small"
+						>
+							<div className="create-dashboard-menu-item">
+								<Github size={14} /> View templates
+							</div>
+							<ExternalLink size={14} />
+						</Flex>
+					</a>
+				),
+				key: '2',
+			},
 		];
 
 		if (createNewDashboard) {
@@ -619,6 +668,21 @@ function DashboardsList(): JSX.Element {
 		hideOnSinglePage: true,
 	};
 
+	const logEventCalledRef = useRef(false);
+	useEffect(() => {
+		if (
+			!logEventCalledRef.current &&
+			!isDashboardListLoading &&
+			!isUndefined(dashboardListResponse)
+		) {
+			logEvent('Dashboard List: Page visited', {
+				number: dashboardListResponse?.length,
+			});
+			logEventCalledRef.current = true;
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [isDashboardListLoading]);
+
 	return (
 		<div className="dashboards-list-container">
 			<div className="dashboards-list-view-content">
@@ -628,19 +692,19 @@ function DashboardsList(): JSX.Element {
 						<Typography.Text className="subtitle">
 							Create and manage dashboards for your workspace.
 						</Typography.Text>
-						<FacingIssueBtn
-							attributes={{
-								screen: 'Dashboard list page',
-							}}
-							eventName="Dashboard: Facing Issues in dashboard"
-							message={dashboardListMessage}
-							buttonText="Facing issues with dashboards?"
-							onHoverText="Click here to get help with dashboards"
-						/>
 					</Flex>
+					{isCloudUser() && (
+						<div className="integrations-container">
+							<div className="integrations-content">
+								<RequestDashboardBtn />
+							</div>
+						</div>
+					)}
 				</div>
 
-				{isDashboardListLoading || isFilteringDashboards ? (
+				{isDashboardListLoading ||
+				isFilteringDashboards ||
+				isDashboardListRefetching ? (
 					<div className="loading-dashboard-details">
 						<Skeleton.Input active size="large" className="skeleton-1" />
 						<Skeleton.Input active size="large" className="skeleton-1" />
@@ -677,7 +741,7 @@ function DashboardsList(): JSX.Element {
 							<ArrowUpRight size={16} className="learn-more-arrow" />
 						</section>
 					</div>
-				) : dashboards?.length === 0 && !searchValue ? (
+				) : dashboards?.length === 0 && !searchString ? (
 					<div className="dashboard-empty-state">
 						<img
 							src="/Icons/dashboards.svg"
@@ -705,6 +769,9 @@ function DashboardsList(): JSX.Element {
 										type="text"
 										className="new-dashboard"
 										icon={<Plus size={14} />}
+										onClick={(): void => {
+											logEvent('Dashboard List: New dashboard clicked', {});
+										}}
 									>
 										New Dashboard
 									</Button>
@@ -712,6 +779,7 @@ function DashboardsList(): JSX.Element {
 								<Button
 									type="text"
 									className="learn-more"
+									data-testid="learn-more"
 									onClick={(): void => {
 										window.open(
 											'https://signoz.io/docs/userguide/manage-dashboards?utm_source=product&utm_medium=dashboard-list-empty-state',
@@ -731,7 +799,7 @@ function DashboardsList(): JSX.Element {
 							<Input
 								placeholder="Search by name, description, or tags..."
 								prefix={<Search size={12} color={Color.BG_VANILLA_400} />}
-								value={searchValue}
+								value={searchString}
 								onChange={handleSearch}
 							/>
 							{createNewDashboard && (
@@ -745,6 +813,9 @@ function DashboardsList(): JSX.Element {
 										type="primary"
 										className="periscope-btn primary btn"
 										icon={<Plus size={14} />}
+										onClick={(): void => {
+											logEvent('Dashboard List: New dashboard clicked', {});
+										}}
 									>
 										New dashboard
 									</Button>
@@ -756,7 +827,7 @@ function DashboardsList(): JSX.Element {
 							<div className="no-search">
 								<img src="/Icons/emptyState.svg" alt="img" className="img" />
 								<Typography.Text className="text">
-									No dashboards found for {searchValue}. Create a new dashboard?
+									No dashboards found for {searchString}. Create a new dashboard?
 								</Typography.Text>
 							</div>
 						) : (
@@ -778,6 +849,7 @@ function DashboardsList(): JSX.Element {
 															type="text"
 															className={cx('sort-btns')}
 															onClick={(): void => sortHandle('createdAt')}
+															data-testid="sort-by-last-created"
 														>
 															Last created
 															{sortOrder.columnKey === 'createdAt' && <Check size={14} />}
@@ -786,6 +858,7 @@ function DashboardsList(): JSX.Element {
 															type="text"
 															className={cx('sort-btns')}
 															onClick={(): void => sortHandle('updatedAt')}
+															data-testid="sort-by-last-updated"
 														>
 															Last updated
 															{sortOrder.columnKey === 'updatedAt' && <Check size={14} />}
@@ -796,7 +869,7 @@ function DashboardsList(): JSX.Element {
 												placement="bottomRight"
 												arrow={false}
 											>
-												<ArrowDownWideNarrow size={14} />
+												<ArrowDownWideNarrow size={14} data-testid="sort-by" />
 											</Popover>
 										</Tooltip>
 										<Popover
@@ -830,7 +903,11 @@ function DashboardsList(): JSX.Element {
 									columns={columns}
 									dataSource={data}
 									showSorterTooltip
-									loading={isDashboardListLoading || isFilteringDashboards}
+									loading={
+										isDashboardListLoading ||
+										isFilteringDashboards ||
+										isDashboardListRefetching
+									}
 									showHeader={false}
 									pagination={paginationConfig}
 								/>
@@ -1023,6 +1100,11 @@ export interface Data {
 	isLocked: boolean;
 	id: string;
 	image?: string;
+	widgets?: Array<WidgetRow | Widgets>;
+	layout?: Layout[];
+	panelMap?: Record<string, { widgets: Layout[]; collapsed: boolean }>;
+	variables: Record<string, IDashboardVariable>;
+	version?: string;
 }
 
 export default DashboardsList;

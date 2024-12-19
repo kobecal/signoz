@@ -203,7 +203,7 @@ func (q *querier) runBuilderQueries(ctx context.Context, params *v3.QueryRangePa
 
 	var err error
 	if len(errs) > 0 {
-		err = fmt.Errorf("error in builder queries")
+		err = fmt.Errorf("error in builder queries. errors: %v", errs)
 	}
 
 	return results, errQueriesByName, err
